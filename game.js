@@ -209,6 +209,7 @@ class Ship {
     this.invincible    = 3;
     this.shootCooldown = 0;
     this.boostTimer    = 0;
+    this.tripleTimer   = 0;
     this.dead          = false;
   }
 
@@ -217,6 +218,7 @@ class Ship {
     if (this.invincible    > 0) this.invincible    -= dt;
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.boostTimer    > 0) this.boostTimer    -= dt;
+    if (this.tripleTimer   > 0) this.tripleTimer   -= dt;
 
     const ROT    = 3.5;  // rad/s
     const THRUST = this.boostTimer > 0 ? 520 : 260;  // px/s² (x2 con velocidad)
@@ -243,7 +245,17 @@ class Ship {
     const NOSE = 21;
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
-    return [new Bullet(ox, oy, this.angle)];
+    if (this.tripleTimer <= 0) return [new Bullet(ox, oy, this.angle)];
+    // Triple shot: bala central y dos laterales desplazadas que convergen
+    const SPREAD_ANGLE = 0.045; // convergencia hacia el eje central
+    const SIDE_OFFSET  = 6;     // desplazamiento lateral desde el morro
+    const bullets = [new Bullet(ox, oy, this.angle)];
+    for (const sign of [-1, 1]) {
+      const sx = ox - Math.sin(this.angle) * SIDE_OFFSET * sign;
+      const sy = oy + Math.cos(this.angle) * SIDE_OFFSET * sign;
+      bullets.push(new Bullet(sx, sy, this.angle - SPREAD_ANGLE * sign));
+    }
+    return bullets;
   }
 
   draw() {
@@ -283,9 +295,15 @@ class Ship {
   }
 }
 
-// ── Power-up (velocidad) ─────────────────────────────────────────────────────
+// ── Power-ups ────────────────────────────────────────────────────────────────
+const POWERUP_STYLES = {
+  speed:  { color: '255, 212, 0' },    // amarillo
+  triple: { color: '170, 120, 255' },  // violeta
+};
+
 class PowerUp {
-  constructor(x, y) {
+  constructor(x, y, type) {
+    this.type = type;
     this.x = x;
     this.y = y;
     const angle = rand(0, Math.PI * 2);
@@ -305,27 +323,39 @@ class PowerUp {
   }
 
   draw() {
-    // Anillo pulsante con doble chevron
+    // Anillo pulsante con icono según tipo
     const pulse  = 1 + 0.15 * Math.sin(this.ttl * 6);
     const r      = this.radius * pulse;
     const alpha  = this.ttl < 3 ? (Math.floor(this.ttl * 6) % 2 ? 0.35 : 1) : 1;
+    const color  = POWERUP_STYLES[this.type].color;
 
     ctx.save();
     ctx.translate(this.x, this.y);
-    ctx.strokeStyle = `rgba(255, 212, 0, ${alpha})`;
+    ctx.strokeStyle = `rgba(${color}, ${alpha})`;
     ctx.lineWidth   = 1.5;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.beginPath();
-    ctx.moveTo(-2, -5);
-    ctx.lineTo( 2, -5);
-    ctx.lineTo(-1,  0);
-    ctx.lineTo( 3,  0);
-    ctx.lineTo(-2,  5);
-    ctx.closePath();
-    ctx.stroke();
+    if (this.type === 'speed') {
+      // Doble chevron
+      ctx.beginPath();
+      ctx.moveTo(-2, -5);
+      ctx.lineTo( 2, -5);
+      ctx.lineTo(-1,  0);
+      ctx.lineTo( 3,  0);
+      ctx.lineTo(-2,  5);
+      ctx.closePath();
+      ctx.stroke();
+    } else {
+      // Tres líneas divergentes
+      for (const a of [-0.35, 0, 0.35]) {
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * 2, Math.sin(a) * 2 - 1);
+        ctx.lineTo(Math.cos(a) * 6, Math.sin(a) * 6 - 5);
+        ctx.stroke();
+      }
+    }
     ctx.restore();
   }
 }
@@ -368,6 +398,7 @@ let score, lives, level;
 let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
 let powerUpTimer;
+let tripleSpawnTimer;
 let shootingStarTimer;
 
 function spawnAsteroids(count) {
@@ -394,6 +425,7 @@ function initGame() {
   level  = 1;
   state  = 'playing';
   powerUpTimer = rand(10, 18);
+  tripleSpawnTimer = rand(12, 22);
   shootingStarTimer = rand(5, 12);
   spawnAsteroids(4);
 }
@@ -405,6 +437,7 @@ function nextLevel() {
   powerUps  = [];
   shootingStars = [];
   powerUpTimer = rand(10, 18);
+  tripleSpawnTimer = rand(12, 22);
   shootingStarTimer = rand(5, 12);
   ship.reset();
   spawnAsteroids(3 + level);
@@ -448,11 +481,18 @@ function update(dt) {
     return;
   }
 
-  // Spawn de power-up (solo si no hay ninguno en pantalla)
+  // Spawn de power-up de velocidad (solo si no hay ninguno en pantalla)
   powerUpTimer -= dt;
-  if (powerUpTimer <= 0 && powerUps.length === 0) {
-    powerUps.push(new PowerUp(rand(0, W), rand(0, H)));
+  if (powerUpTimer <= 0 && !powerUps.some(u => u.type === 'speed')) {
+    powerUps.push(new PowerUp(rand(0, W), rand(0, H), 'speed'));
     powerUpTimer = rand(10, 18);
+  }
+
+  // Spawn de power-up de triple disparo (independiente del de velocidad)
+  tripleSpawnTimer -= dt;
+  if (tripleSpawnTimer <= 0 && !powerUps.some(u => u.type === 'triple')) {
+    powerUps.push(new PowerUp(rand(0, W), rand(0, H), 'triple'));
+    tripleSpawnTimer = rand(12, 22);
   }
 
   // Spawn de estrella fugaz (cruza la pantalla sin rebotar)
@@ -529,8 +569,9 @@ function update(dt) {
   for (const u of powerUps) {
     if (dist(ship, u) < ship.radius + u.radius) {
       u.dead = true;
-      ship.boostTimer = 5;
       explode(u.x, u.y, 5);
+      if (u.type === 'speed')  ship.boostTimer  = 5;
+      else                     ship.tripleTimer = 5;
     }
   }
 
@@ -569,11 +610,18 @@ function drawHUD() {
   for (let i = 0; i < lives; i++)
     drawLifeIcon(W - 16 - i * 22, 18);
 
-  // Indicador de boost activo
+  // Indicadores de power-ups activos
+  let hudY = H - 22;
+  if (ship.tripleTimer > 0) {
+    ctx.fillStyle = 'rgb(170, 120, 255)';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(`TRIPLE ${Math.ceil(ship.tripleTimer)}s`, W / 2, hudY);
+    hudY -= 24;
+  }
   if (ship.boostTimer > 0) {
     ctx.fillStyle = '#ffd400';
     ctx.font = 'bold 16px monospace';
-    ctx.fillText(`VELOCIDAD ${Math.ceil(ship.boostTimer)}s`, W / 2, H - 22);
+    ctx.fillText(`VELOCIDAD ${Math.ceil(ship.boostTimer)}s`, W / 2, hudY);
   }
 
 }
