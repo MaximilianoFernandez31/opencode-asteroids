@@ -250,6 +250,18 @@ class ShootingStar {
   }
 }
 
+function drawShield(x, y, timer) {
+  if (timer <= 0) return;
+  // Parpadeo final y leve pulso de tamaño
+  if (timer < 1.5 && Math.floor(timer * 10) % 2 === 0) return;
+  const r = 26 + Math.sin(timer * 5) * 2;
+  ctx.strokeStyle = 'rgba(80, 220, 255, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
 // ── Ship ──────────────────────────────────────────────────────────────────────
 function drawShipShape(verts, stroke, lineWidth, scale = 1) {
   ctx.beginPath();
@@ -278,6 +290,7 @@ class Ship {
     this.shootCooldown = 0;
     this.boostTimer    = 0;
     this.tripleTimer   = 0;
+    this.shieldTimer   = 0;
     this.dead          = false;
   }
 
@@ -287,6 +300,7 @@ class Ship {
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.boostTimer    > 0) this.boostTimer    -= dt;
     if (this.tripleTimer   > 0) this.tripleTimer   -= dt;
+    if (this.shieldTimer   > 0) this.shieldTimer   -= dt;
 
     const ROT    = 3.5;  // rad/s
     const THRUST = this.boostTimer > 0 ? 520 : 260;  // px/s² (x2 con velocidad)
@@ -352,6 +366,8 @@ class Ship {
     }
 
     ctx.restore();
+
+    drawShield(this.x, this.y, this.shieldTimer);
   }
 }
 
@@ -359,7 +375,10 @@ class Ship {
 const POWERUP_STYLES = {
   speed:  { color: '255, 212, 0' },    // amarillo
   triple: { color: '170, 120, 255' },  // violeta
+  shield: { color: '80, 220, 255' },   // cian
 };
+
+const POWERUP_TYPES = ['speed', 'shield'];
 
 class PowerUp {
   constructor(x, y, type) {
@@ -397,7 +416,24 @@ class PowerUp {
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.stroke();
 
-    if (this.type === 'speed') {
+    if (this.type === 'shield') {
+      // Silueta de escudo: borde superior + lados curvos hacia punta inferior
+      ctx.beginPath();
+      ctx.moveTo(-4, -5);
+      ctx.lineTo( 1, -5);
+      ctx.quadraticCurveTo( 4, -3, 4,  0);
+      ctx.quadraticCurveTo( 3,  3, 0,  5);
+      ctx.quadraticCurveTo(-3,  3, -4,  0);
+      ctx.closePath();
+      ctx.stroke();
+      // Rayo central
+      ctx.beginPath();
+      ctx.moveTo( 1, -4);
+      ctx.lineTo(-1,  0);
+      ctx.lineTo( 1,  0);
+      ctx.lineTo(-1,  4);
+      ctx.stroke();
+    } else if (this.type === 'speed') {
       // Doble chevron
       ctx.beginPath();
       ctx.moveTo(-2, -5);
@@ -545,10 +581,11 @@ function update(dt) {
     return;
   }
 
-  // Spawn de power-up de velocidad (solo si no hay ninguno en pantalla)
+  // Spawn de power-up de velocidad o escudo (elegido al azar, solo si no hay ninguno en pantalla)
   powerUpTimer -= dt;
-  if (powerUpTimer <= 0 && !powerUps.some(u => u.type === 'speed')) {
-    powerUps.push(new PowerUp(rand(0, W), rand(0, H), 'speed'));
+  if (powerUpTimer <= 0 && !powerUps.some(u => u.type === 'speed' || u.type === 'shield')) {
+    const type = POWERUP_TYPES[randInt(0, POWERUP_TYPES.length - 1)];
+    powerUps.push(new PowerUp(rand(0, W), rand(0, H), type));
     powerUpTimer = rand(10, 18);
   }
 
@@ -613,8 +650,8 @@ function update(dt) {
   bullets   = bullets.filter(b => !b.dead);
   shootingStars = shootingStars.filter(s => !s.dead);
 
-  // Nave vs asteroide
-  if (ship.invincible <= 0) {
+  // Nave vs asteroide / estrella fugaz (el escudo protege y destruye el amenaza)
+  if (ship.invincible <= 0 && ship.shieldTimer <= 0) {
     for (const a of asteroids) {
       if (dist(ship, a) < ship.radius + a.radius * 0.82) {
         killShip();
@@ -634,8 +671,9 @@ function update(dt) {
     if (dist(ship, u) < ship.radius + u.radius) {
       u.dead = true;
       explode(u.x, u.y, 5);
-      if (u.type === 'speed')  ship.boostTimer  = 5;
-      else                     ship.tripleTimer = 5;
+      if (u.type === 'shield')      ship.shieldTimer = 5;
+      else if (u.type === 'triple') ship.tripleTimer = 5;
+      else                          ship.boostTimer  = 5;
     }
   }
 
@@ -666,26 +704,32 @@ function drawHUD() {
   for (let i = 0; i < lives; i++)
     drawLifeIcon(W - 16 - i * 22, 18);
 
-  // Indicadores de power-ups activos
-  let hudY = H - 22;
-  if (ship.tripleTimer > 0) {
-    ctx.fillStyle = 'rgb(170, 120, 255)';
-    ctx.font = 'bold 16px monospace';
-    ctx.fillText(`TRIPLE ${Math.ceil(ship.tripleTimer)}s`, W / 2, hudY);
-    hudY -= 24;
-  }
-  if (ship.boostTimer > 0) {
-    ctx.fillStyle = '#ffd400';
-    ctx.font = 'bold 16px monospace';
-    ctx.fillText(`VELOCIDAD ${Math.ceil(ship.boostTimer)}s`, W / 2, hudY);
-  }
-
   // Nombre del skin activo tras cambiar (fade)
   if (skinLabelTimer > 0) {
     ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(1, skinLabelTimer).toFixed(2)})`;
     ctx.font = 'bold 16px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`NAVE ${skinManager.current().name}`, W / 2, H - 46);
+    ctx.fillText(`NAVE ${skinManager.current().name}`, W / 2, H - 94);
+  }
+
+  // Indicadores de power-ups activos
+  let hudY = H - 22;
+  if (ship.tripleTimer > 0) {
+    ctx.fillStyle = `rgb(${POWERUP_STYLES.triple.color})`;
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(`TRIPLE ${Math.ceil(ship.tripleTimer)}s`, W / 2, hudY);
+    hudY -= 24;
+  }
+  if (ship.boostTimer > 0) {
+    ctx.fillStyle = `rgb(${POWERUP_STYLES.speed.color})`;
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(`VELOCIDAD ${Math.ceil(ship.boostTimer)}s`, W / 2, hudY);
+    hudY -= 24;
+  }
+  if (ship.shieldTimer > 0) {
+    ctx.fillStyle = `rgb(${POWERUP_STYLES.shield.color})`;
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(`ESCUDO ${Math.ceil(ship.shieldTimer)}s`, W / 2, hudY);
   }
 
 }
