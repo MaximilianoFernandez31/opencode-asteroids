@@ -27,4 +27,4 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: GLM-5.3-Flash Free
+          model: opencode/glm-5.3-flash-free
